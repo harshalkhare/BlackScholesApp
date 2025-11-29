@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NIFTY Option Pricing — Black-Scholes</title>
+
+  <style>
+    :root{
+      --bg:#f4f7fb;
+      --card:#ffffff;
+      --accent:#2563eb;
+      --muted:#6b7280;
+      --green:#059669;
+      --red:#dc2626;
+      --glass: rgba(255,255,255,0.6);
+    }
+
+    body{
+      margin:0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background: linear-gradient(180deg, var(--bg), #eef2ff 120%);
+      color:#111827;
+      padding:28px;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+
+    .wrap{ max-width:980px; margin:0 auto; }
+
+    header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+      margin-bottom:18px;
+    }
+    header h1{ font-size:20px; margin:0; }
+    header p{ margin:0; color:var(--muted); font-size:13px; }
+
+    .grid{ display:grid; grid-template-columns: 1fr 360px; gap:18px; align-items:start; }
+
+    .card{
+      background:var(--card);
+      border-radius:12px;
+      padding:18px;
+      box-shadow: 0 6px 20px rgba(13, 24, 41, 0.06);
+    }
+
+    .controls{ display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+    select { padding:8px 10px; border-radius:8px; border:1px solid #e6e9ef; background:white; }
+    button.btn { padding:9px 12px; border-radius:8px; border:0; background:var(--accent); color:white; cursor:pointer; }
+    button.btn:active{ transform:translateY(1px); }
+
+    .small { font-size:13px; color:var(--muted); }
+
+    .stats{ display:grid; grid-template-columns:repeat(2,1fr); gap:12px; margin-top:8px; }
+    .stat { background: linear-gradient(180deg, rgba(37,99,235,0.03), rgba(37,99,235,0.02)); padding:12px; border-radius:8px; }
+    .stat .label { font-size:12px; color:var(--muted); }
+    .stat .val { font-size:18px; font-weight:600; margin-top:6px; }
+
+    /* Unified larger font for predicted/actual/diff block */
+    .option-block { display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+    .option-main { font-size:20px; font-weight:700; }     /* predicted */
+    .option-sub { font-size:16px; color:var(--muted); }    /* actual text */
+    .option-diff { font-size:16px; font-weight:700; }     /* diff */
+
+    /* Colors follow your logic (different classes for put/call) */
+    .put-red { color: var(--red); }     /* predicted_put - actual_put > 0 => RED */
+    .put-green { color: var(--green); } /* else GREEN */
+
+    .call-green { color: var(--green); } /* predicted_call - actual_call > 0 => GREEN */
+    .call-red { color: var(--red); }     /* else RED */
+
+    .explain { font-size:14px; color:#111827; line-height:1.4; }
+    .explain ul { margin:8px 0 0 18px; color:var(--muted); }
+
+    .right-col .box { margin-bottom:12px; }
+
+    .meta-row { display:flex; gap:8px; align-items:center; justify-content:space-between; margin-top:10px; }
+    .meta-left { color:var(--muted); font-size:13px; }
+    .updated { color:var(--muted); font-size:12px; }
+
+    /* responsive */
+    @media (max-width:880px){
+      .grid{ grid-template-columns: 1fr; }
+      .right-col{ order:-1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>NIFTY Option Pricing</h1>
+        <p class="small">Live comparison of Black-Scholes theoretical price vs market LTP.</p>
+      </div>
+      <div class="small" id="lastUpdated">—</div>
+    </header>
+
+    <div class="grid">
+      <!-- LEFT: Controls + Explanation + Result -->
+      <div>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <strong>Live Option Pricing</strong>
+              <div class="small">Select expiry & fetch latest values</div>
+            </div>
+            <div class="small" id="expiryLabel">Expiry: —</div>
+          </div>
+
+          <div style="margin-top:12px;" class="controls">
+            <select id="expiry">
+              <option value="weekly">Weekly (WE)</option>
+              <option value="second_weekly">Second Weekly (SE)</option>
+              <option value="monthly">Monthly (ME)</option>
+            </select>
+
+            <button class="btn" id="refreshBtn">Refresh</button>
+            <button class="btn" id="refreshAutoBtn" style="background:#10b981;">Auto</button>
+          </div>
+
+          <div id="loading" class="small" style="display:none;margin-bottom:8px;">Loading…</div>
+
+          <div id="resultsArea" style="margin-top:8px;">
+            <div class="stats">
+              <div class="stat">
+                <div class="label">Spot Price (S)</div>
+                <div class="val" id="spot">—</div>
+              </div>
+              <div class="stat">
+                <div class="label">ATM Strike (K)</div>
+                <div class="val" id="strike">—</div>
+              </div>
+
+              <div class="stat">
+                <div class="label">Implied Volatility (IV)</div>
+                <div class="val" id="iv">—</div>
+              </div>
+              <div class="stat">
+                <div class="label">Time to Expiry</div>
+                <div class="val" id="expiryDate">—</div>
+              </div>
+            </div>
+
+            <div style="margin-top:14px;">
+              <div style="display:flex;gap:12px;">
+                <!-- PUT block -->
+                <div style="flex:1" class="card">
+                  <div class="small">Predicted PUT</div>
+                  <div class="option-block">
+                    <div id="pred_put" class="option-main">—</div>
+                    <div class="option-sub">Actual PUT <span id="act_put">—</span></div>
+                    <div id="diff_put" class="option-diff">—</div>
+                  </div>
+                </div>
+
+                <!-- CALL block -->
+                <div style="flex:1" class="card">
+                  <div class="small">Predicted CALL</div>
+                  <div class="option-block">
+                    <div id="pred_call" class="option-main">—</div>
+                    <div class="option-sub">Actual CALL <span id="act_call">—</span></div>
+                    <div id="diff_call" class="option-diff">—</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="meta-row">
+              <div class="meta-left" id="notes">Source: TradingView (LTP) · Model: Black-Scholes</div>
+              <div class="updated" id="updatedAt">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong>About Black-Scholes</strong>
+            <div class="small">Quick summary</div>
+          </div>
+
+          <div style="margin-top:10px;" class="explain">
+            <p>The Black-Scholes model estimates the theoretical price of European call and put options using:</p>
+            <ul>
+              <li>Spot price (S)</li>
+              <li>Strike price (K)</li>
+              <li>Time to expiry (T)</li>
+              <li>Volatility (σ)</li>
+              <li>Risk-free rate (r)</li>
+            </ul>
+            <p class="small">Comparing the model price vs market LTP helps spot mispricing or arbitrage opportunities.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Extra info / controls -->
+      <div class="right-col">
+        <div class="card box">
+          <strong>Quick info</strong>
+          <div style="margin-top:8px;" class="small">
+            Choose expiry then click <em>Refresh</em>. The backend will compute:
+            <ul>
+              <li>ATM strike & IV (from Sensibull functions)</li>
+              <li>Spot & option LTPs (from TradingView fetch)</li>
+              <li>Black-Scholes theoretical prices</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card box">
+          <strong>Controls</strong>
+          <div style="margin-top:8px;">
+            <div class="small">Auto-refresh: click <em>Auto</em> (toggles every 8 seconds)</div>
+            <div style="height:10px"></div>
+            <div class="small">Expiry selected: <span id="selExpiryLabel">Weekly</span></div>
+          </div>
+        </div>
+
+        <div class="card box">
+          <strong>Debug</strong>
+          <div style="margin-top:8px;" class="small">
+            <div>Last API response (console also logs): open devtools to inspect.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Frontend logic to call backend and populate fields
+  const refreshBtn = document.getElementById('refreshBtn');
+  const autoBtn = document.getElementById('refreshAutoBtn');
+  const expirySelect = document.getElementById('expiry');
+  let autoTimer = null;
+
+  function setLoading(isLoading){
+    document.getElementById('loading').style.display = isLoading ? 'block' : 'none';
+    refreshBtn.disabled = isLoading;
+  }
+
+  async function fetchData(){
+    const expiry = expirySelect.value; // weekly | second_weekly | monthly
+    document.getElementById('expiryLabel').innerText = expiry.replace('_',' ').toUpperCase();
+    document.getElementById('selExpiryLabel').innerText = expiry.replace('_',' ').replace(/\b\w/g, c => c.toUpperCase());
+
+    setLoading(true);
+    try {
+      const resp = await fetch(`/api/data?expiry=${encodeURIComponent(expiry)}`);
+      if (!resp.ok) throw new Error('Network response not OK');
+
+      const data = await resp.json();
+      // Populate UI
+      document.getElementById('spot').innerText = data.spot ?? '—';
+      document.getElementById('strike').innerText = data.strike ?? '—';
+      document.getElementById('iv').innerText = data.iv ?? '—';
+      document.getElementById('expiryDate').innerText = data.expiry_date ?? '—';
+
+      // Predicted & actual (show with 2 decimals)
+      const predPut = Number(data.predicted_put ?? 0);
+      const actPut = Number(data.actual_put ?? 0);
+      const predCall = Number(data.predicted_call ?? 0);
+      const actCall = Number(data.actual_call ?? 0);
+
+      document.getElementById('pred_put').innerText = predPut.toFixed(2);
+      document.getElementById('act_put').innerText = actPut.toFixed(2);
+
+      document.getElementById('pred_call').innerText = predCall.toFixed(2);
+      document.getElementById('act_call').innerText = actCall.toFixed(2);
+
+      // Diffs: compute predicted - actual
+      const diffPut = predPut - actPut;
+      const diffCall = predCall - actCall;
+
+      const dpEl = document.getElementById('diff_put');
+      const dcEl = document.getElementById('diff_call');
+
+      // PUT coloring per your logic: RED if predicted - actual > 0 else GREEN
+      if (diffPut > 0) {
+        dpEl.className = 'option-diff put-red';
+      } else {
+        dpEl.className = 'option-diff put-green';
+      }
+      dpEl.innerText = `Difference (PUT): ${diffPut.toFixed(2)}`;
+
+      // CALL coloring per your logic: GREEN if predicted - actual > 0 else RED
+      if (diffCall > 0) {
+        dcEl.className = 'option-diff call-green';
+      } else {
+        dcEl.className = 'option-diff call-red';
+      }
+      dcEl.innerText = `Difference (CALL): ${diffCall.toFixed(2)}`;
+
+      // timestamps
+      const now = new Date();
+      document.getElementById('lastUpdated').innerText = `Updated: ${now.toLocaleString()}`;
+      document.getElementById('updatedAt').innerText = now.toLocaleTimeString();
+
+      console.log('API data', data);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to fetch data from backend — check console.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // button handlers
+  refreshBtn.addEventListener('click', fetchData);
+
+  autoBtn.addEventListener('click', () => {
+    if (autoTimer){
+      // stop
+      clearInterval(autoTimer);
+      autoTimer = null;
+      autoBtn.style.background = '#10b981';
+      autoBtn.innerText = 'Auto';
+    } else {
+      // start
+      fetchData(); // immediate
+      autoTimer = setInterval(fetchData, 8000); // every 8 sec
+      autoBtn.style.background = '#ef4444';
+      autoBtn.innerText = 'Stop';
+    }
+  });
+
+  // also fetch on expiry change
+  expirySelect.addEventListener('change', fetchData);
+
+  // initial load
+  fetchData();
+</script>
+</body>
+</html>
